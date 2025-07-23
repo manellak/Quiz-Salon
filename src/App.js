@@ -5,14 +5,14 @@ import { getAuth, signInAnonymously } from "firebase/auth";
 
 // --- Configuration Firebase ---
 // Vos clés personnelles sont maintenant intégrées.
+
 const firebaseConfig = {
-  apiKey: "AIzaSyBPYQ71AD6UcMBUsOPzAPO0cGP_6vSD180",
-  authDomain: "leadqualify-quiz.firebaseapp.com",
-  projectId: "leadqualify-quiz",
-  storageBucket: "leadqualify-quiz.firebasestorage.app",
-  messagingSenderId: "254277095540",
-  appId: "1:254277095540:web:16db3779b724abbe264121",
-  measurementId: "G-8EY3HZT3E3"
+  apiKey: process.env.REACT_APP_API_KEY,
+  authDomain: process.env.REACT_APP_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_APP_ID
 };
 
 // --- Initialisation de Firebase ---
