@@ -1,27 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, query, onSnapshot, Timestamp, doc, deleteDoc, setDoc, getDoc, getDocs, updateDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, onSnapshot, Timestamp, doc, deleteDoc, setDoc, getDoc, getDocs, updateDoc, writeBatch } from 'firebase/firestore';
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 // --- Configuration Firebase ---
-// Remplacez ces valeurs par votre configuration Firebase si elles sont différentes.
+// J'ai remis la configuration comme vous l'aviez partagée.
 const firebaseConfig = {
-
-  apiKey: "AIzaSyBPYQ71AD6UcMBUsOPzAPO0cGP_6vSD180",
-
-  authDomain: "leadqualify-quiz.firebaseapp.com",
-
-  projectId: "leadqualify-quiz",
-
-  storageBucket: "leadqualify-quiz.firebasestorage.app",
-
-  messagingSenderId: "254277095540",
-
-  appId: "1:254277095540:web:16db3779b724abbe264121",
-
-  measurementId: "G-8EY3HZT3E3"
-
+    apiKey: "AIzaSyBPYQ71AD6UcMBUsOPzAPO0cGP_6vSD180",
+    authDomain: "leadqualify-quiz.firebaseapp.com",
+    projectId: "leadqualify-quiz",
+    storageBucket: "leadqualify-quiz.firebasestorage.app",
+    messagingSenderId: "254277095540",
+    appId: "1:254277095540:web:16db3779b724abbe264121",
+    measurementId: "G-8EY3HZT3E3"
 };
+
 
 // --- Initialisation de Firebase ---
 let app;
@@ -41,7 +34,6 @@ const initialQuizData = {
     "salon-diagnostic-habitat": {
         title: "Quiz Diagnostic Habitat",
         questions: [
-            // ... (les questions restent les mêmes que dans votre code original)
             { text: "Si vous aviez une baguette magique pour votre logement, votre premier geste serait de...",
               answers: [
                   { text: "Changer la décoration.", points: 0 },
@@ -179,7 +171,6 @@ const FloatingAssets = () => {
         </div>
     );
 };
-
 
 const WelcomeScreen = ({ onStart, isLoading }) => (
     <div className="text-center p-8">
@@ -354,7 +345,7 @@ const FranchiseLoginScreen = ({ onLoginSuccess, initialFranchiseId = '' }) => {
             <h2 className="text-4xl font-bold text-pink-700 text-center mb-6">Accès Franchisé</h2>
             <form onSubmit={handleSubmit} className="mt-6 space-y-4">
                 <input type="text" value={franchiseIdInput} onChange={(e) => setFranchiseIdInput(e.target.value)} placeholder="Identifiant" disabled={loading} className="w-full px-4 py-3 bg-white border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 text-gray-800 text-lg" />
-                <input type="password" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="Code PIN" maxLength="4" disabled={loading} className="w-full text-center text-3xl tracking-[1rem] px-4 py-2 bg-white border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 text-gray-800" />
+                <input type="password" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="----" maxLength="4" disabled={loading} className="w-full text-center text-2xl tracking-widest px-4 py-3 bg-white border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 text-gray-800" />
                 {error && <p className="text-red-600 mt-2 text-center text-lg">{error}</p>}
                 <button type="submit" disabled={loading} className="w-full bg-pink-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg hover:bg-pink-700 uppercase tracking-wider disabled:opacity-50">
                     {loading ? "Vérification..." : "Connexion"}
@@ -380,7 +371,10 @@ const ConfirmationModal = ({ message, onConfirm, onCancel }) => (
 const DashboardScreen = ({ franchiseId, onLogout, onStartQuiz }) => {
     const [leads, setLeads] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [leadToDelete, setLeadToDelete] = useState(null);
+    const [leadsToDelete, setLeadsToDelete] = useState([]);
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [selectedLeads, setSelectedLeads] = useState(new Set());
+    const [searchTerm, setSearchTerm] = useState("");
 
     useEffect(() => {
         if (!franchiseId || !db) return;
@@ -389,56 +383,136 @@ const DashboardScreen = ({ franchiseId, onLogout, onStartQuiz }) => {
 
         const unsubscribe = onSnapshot(q, (querySnapshot) => {
             const leadsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            leadsData.sort((a, b) => b.createdAt.seconds - a.createdAt.seconds);
             setLeads(leadsData); setLoading(false);
         }, (error) => { console.error("Erreur BDD: ", error); setLoading(false); });
         return () => unsubscribe();
     }, [franchiseId]);
+    
+    const filteredAndSortedLeads = useMemo(() => {
+        const filtered = leads.filter(lead => 
+            (lead.firstName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+            (lead.lastName?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+            (lead.email?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+            (lead.phone?.toLowerCase() || '').includes(searchTerm.toLowerCase())
+        );
+
+        return filtered.sort((a, b) => (a.lastName || '').localeCompare(b.lastName || ''));
+    }, [leads, searchTerm]);
+
+    const handleSelectAll = (e) => {
+        if (e.target.checked) {
+            const allVisibleLeadIds = filteredAndSortedLeads.map(lead => lead.id);
+            setSelectedLeads(new Set(allVisibleLeadIds));
+        } else {
+            setSelectedLeads(new Set());
+        }
+    };
+
+    const handleSelectLead = (leadId) => {
+        const newSelection = new Set(selectedLeads);
+        if (newSelection.has(leadId)) {
+            newSelection.delete(leadId);
+        } else {
+            newSelection.add(leadId);
+        }
+        setSelectedLeads(newSelection);
+    };
+
+    const handleDeleteClick = (lead) => {
+        setLeadsToDelete([lead]);
+        setIsDeleteModalOpen(true);
+    };
+    
+    const handleDeleteSelectedClick = () => {
+        const selected = leads.filter(lead => selectedLeads.has(lead.id));
+        setLeadsToDelete(selected);
+        setIsDeleteModalOpen(true);
+    };
 
     const confirmDelete = async () => {
-        if (!leadToDelete || !db) return;
+        if (leadsToDelete.length === 0 || !db) return;
+        
         try {
-            await deleteDoc(doc(db, "franchisees", franchiseId, "leads", leadToDelete.id));
-            setLeadToDelete(null);
+            const batch = writeBatch(db);
+            leadsToDelete.forEach(lead => {
+                const docRef = doc(db, "franchisees", franchiseId, "leads", lead.id);
+                batch.delete(docRef);
+            });
+            await batch.commit();
+            
+            setLeadsToDelete([]);
+            setIsDeleteModalOpen(false);
+            if (selectedLeads.size > 0) setSelectedLeads(new Set());
         } catch (error) {
             console.error("Erreur de suppression: ", error);
         }
     };
 
+    const getModalMessage = () => {
+        if(leadsToDelete.length > 1) {
+            return `Voulez-vous vraiment supprimer les ${leadsToDelete.length} leads sélectionnés ?`
+        }
+        if(leadsToDelete.length === 1) {
+             const lead = leadsToDelete[0];
+             return `Voulez-vous vraiment supprimer le lead de ${lead.firstName} ${lead.lastName} ?`;
+        }
+        return '';
+    }
+
     return (
         <>
-            {leadToDelete && (
+            {isDeleteModalOpen && (
                 <ConfirmationModal
-                    message={`Voulez-vous vraiment supprimer le lead de ${leadToDelete.firstName} ${leadToDelete.lastName} ?`}
+                    message={getModalMessage()}
                     onConfirm={confirmDelete}
-                    onCancel={() => setLeadToDelete(null)}
+                    onCancel={() => setIsDeleteModalOpen(false)}
                 />
             )}
             <div className="w-full max-w-7xl mx-auto p-2 sm:p-4 text-gray-800">
-                <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
-                    <h1 className="text-4xl text-gray-800">Dashboard <span className="font-bold text-pink-600">{franchiseId}</span></h1>
-                    <div className="flex gap-2 flex-wrap justify-center">
+                <div className="flex flex-col sm:flex-row justify-between items-center mb-2 gap-4">
+                    <h1 className="text-4xl text-gray-800">Dashboard <span className="font-bold text-pink-600">{franchiseId}</span> <span className="text-2xl text-gray-500 font-normal ml-2">({leads.length} leads)</span></h1>
+                     <div className="flex gap-2 flex-wrap justify-center items-center">
                         <button onClick={onStartQuiz} className="bg-pink-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-pink-700 text-sm uppercase">Lancer un Quiz</button>
                         <button onClick={() => downloadCSV(leads, franchiseId)} className="bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-green-700 text-sm uppercase">Exporter CSV</button>
                         <button onClick={onLogout} className="bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-gray-600 text-sm uppercase">Logout</button>
                     </div>
                 </div>
+                 <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
+                    <input 
+                        type="text" 
+                        placeholder="Rechercher un lead..." 
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full sm:w-1/3 px-4 py-2 bg-white border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500"
+                    />
+                    {selectedLeads.size > 0 && (
+                         <button onClick={handleDeleteSelectedClick} className="bg-red-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-red-700 text-sm uppercase">
+                             Supprimer la sélection ({selectedLeads.size})
+                         </button>
+                    )}
+                 </div>
                 <div className="bg-white/80 p-2 sm:p-4 rounded-lg shadow-inner">
                     {loading ? <p>Chargement...</p> : leads.length === 0 ? (
                         <div className="text-center py-8"><h3 className="text-xl font-bold">Aucun lead</h3><p className="mt-2 text-gray-600">Complétez un quiz pour voir les données ici.</p></div>
                     ) : (
-                        <div className="overflow-x-auto">
+                        <div className="max-h-[32rem] overflow-y-auto">
                             <table className="w-full text-left text-base sm:text-lg">
-                                <thead className="text-pink-700"><tr className="border-b-2 border-pink-200"><th className="p-3">Nom</th><th className="p-3">Contact</th><th className="p-3">Score</th><th className="p-3">Niveau</th><th className="p-3">Quiz</th><th className="p-3">Date</th><th className="p-3">Action</th></tr></thead>
+                                <thead className="text-pink-700 sticky top-0 bg-white/80 backdrop-blur-sm">
+                                    <tr className="border-b-2 border-pink-200">
+                                        <th className="p-3 w-4"><input type="checkbox" onChange={handleSelectAll} checked={filteredAndSortedLeads.length > 0 && selectedLeads.size === filteredAndSortedLeads.length} /></th>
+                                        <th className="p-3">Nom</th><th className="p-3">Contact</th><th className="p-3">Score</th><th className="p-3">Niveau</th><th className="p-3">Quiz</th><th className="p-3">Date</th><th className="p-3">Action</th>
+                                    </tr>
+                                </thead>
                                 <tbody>
-                                    {leads.map(lead => (
-                                        <tr key={lead.id} className="border-b border-pink-100 hover:bg-pink-50">
+                                    {filteredAndSortedLeads.map(lead => (
+                                        <tr key={lead.id} className={`border-b border-pink-100 ${selectedLeads.has(lead.id) ? 'bg-pink-100' : 'hover:bg-pink-50'}`}>
+                                            <td className="p-3"><input type="checkbox" checked={selectedLeads.has(lead.id)} onChange={() => handleSelectLead(lead.id)} /></td>
                                             <td className="p-3">{lead.firstName} {lead.lastName}</td><td className="p-3">{lead.email}<br />{lead.phone}</td>
                                             <td className="p-3 font-bold text-green-600">{lead.score}</td><td className="p-3 font-semibold">{lead.level}</td>
                                             <td className="p-3 font-semibold text-gray-600">{lead.quizTitle || 'N/A'}</td>
                                             <td className="p-3 text-sm text-gray-500">{new Date(lead.createdAt.seconds * 1000).toLocaleString('fr-FR')}</td>
                                             <td className="p-3">
-                                                <button onClick={() => setLeadToDelete(lead)} className="text-red-500 hover:text-red-700 transition-colors">
+                                                <button onClick={() => handleDeleteClick(lead)} className="text-red-500 hover:text-red-700 transition-colors">
                                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                                     </svg>
@@ -456,16 +530,96 @@ const DashboardScreen = ({ franchiseId, onLogout, onStartQuiz }) => {
     );
 };
 
-// --- NOUVEAU COMPOSANT : Éditeur de Quiz ---
+// --- Composant pour le formulaire de création/modification de quiz ---
+const QuizForm = ({ initialQuiz, onSave, onCancel }) => {
+    const isEditing = !!initialQuiz.id;
+    const [title, setTitle] = useState(initialQuiz.title || '');
+    const [questions, setQuestions] = useState(initialQuiz.questions && initialQuiz.questions.length > 0 ? JSON.parse(JSON.stringify(initialQuiz.questions)) : [{ text: '', answers: [{ text: '', points: 0 }, { text: '', points: 0 }] }]);
+    const [isSaving, setIsSaving] = useState(false);
+
+    const handleAddQuestion = () => setQuestions([...questions, { text: '', answers: [{ text: '', points: 0 }, { text: '', points: 0 }] }]);
+    const handleRemoveQuestion = (index) => setQuestions(questions.filter((_, i) => i !== index));
+    const handleQuestionChange = (index, value) => {
+        const updated = [...questions];
+        updated[index].text = value;
+        setQuestions(updated);
+    };
+
+    const handleAddAnswer = (qIndex) => {
+        const updated = [...questions];
+        updated[qIndex].answers.push({ text: '', points: 0 });
+        setQuestions(updated);
+    };
+    const handleRemoveAnswer = (qIndex, aIndex) => {
+        const updated = [...questions];
+        updated[qIndex].answers = updated[qIndex].answers.filter((_, i) => i !== aIndex);
+        setQuestions(updated);
+    };
+    const handleAnswerChange = (qIndex, aIndex, field, value) => {
+        const updated = [...questions];
+        const val = field === 'points' ? parseInt(value, 10) || 0 : value;
+        updated[qIndex].answers[aIndex][field] = val;
+        setQuestions(updated);
+    };
+
+    const handleSave = async () => {
+        if (!title.trim()) return alert("Le titre du quiz est obligatoire.");
+        setIsSaving(true);
+        await onSave({ ...initialQuiz, title, questions });
+        setIsSaving(false);
+    };
+
+    return (
+        <div className="bg-white/80 p-6 rounded-lg shadow-inner animate-fade-in">
+            <h2 className="text-3xl font-bold mb-4 text-pink-600">{isEditing ? 'Modifier le Quiz' : 'Créer un nouveau Quiz'}</h2>
+            <div className="space-y-4">
+                <input
+                    type="text"
+                    value={title}
+                    onChange={e => setTitle(e.target.value)}
+                    placeholder="Titre du Quiz"
+                    className="w-full text-2xl font-bold px-4 py-2 bg-white border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500"
+                    disabled={isEditing}
+                />
+                 {isEditing && <p className="text-xs text-gray-500">Le titre (et donc l'ID) du quiz ne peut pas être modifié.</p>}
+                
+                {questions.map((q, qIndex) => (
+                    <div key={qIndex} className="p-4 border border-pink-200 rounded-lg bg-pink-50/50 space-y-3">
+                        <div className="flex justify-between items-center">
+                            <label className="font-bold text-gray-700">Question {qIndex + 1}</label>
+                            {questions.length > 1 && <button onClick={() => handleRemoveQuestion(qIndex)} className="text-red-500 hover:text-red-700">🗑️ Supprimer Question</button>}
+                        </div>
+                        <textarea value={q.text} onChange={e => handleQuestionChange(qIndex, e.target.value)} placeholder="Texte de la question" className="w-full px-3 py-2 border rounded-md" rows="2"></textarea>
+                         <h4 className="font-semibold text-gray-600">Réponses :</h4>
+                         {q.answers.map((a, aIndex) => (
+                            <div key={aIndex} className="flex gap-2 items-center">
+                                <input type="text" value={a.text} onChange={e => handleAnswerChange(qIndex, aIndex, 'text', e.target.value)} placeholder={`Réponse ${aIndex + 1}`} className="flex-grow px-3 py-2 border rounded-md" />
+                                <input type="number" value={a.points} onChange={e => handleAnswerChange(qIndex, aIndex, 'points', e.target.value)} placeholder="Points" className="w-24 px-3 py-2 border rounded-md" />
+                                {q.answers.length > 2 && <button onClick={() => handleRemoveAnswer(qIndex, aIndex)} className="text-red-500 hover:text-red-700 text-2xl">×</button>}
+                            </div>
+                         ))}
+                         <button onClick={() => handleAddAnswer(qIndex)} className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded-md hover:bg-blue-200">+ Ajouter Réponse</button>
+                    </div>
+                ))}
+                <button onClick={handleAddQuestion} className="w-full py-2 bg-green-100 text-green-700 font-semibold rounded-lg hover:bg-green-200">➕ Ajouter une Question</button>
+            </div>
+            <div className="mt-6 flex justify-end gap-4">
+                <button onClick={onCancel} className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-6 rounded-lg">Annuler</button>
+                <button onClick={handleSave} disabled={isSaving} className="bg-pink-600 hover:bg-pink-700 text-white font-bold py-2 px-6 rounded-lg disabled:opacity-50">
+                    {isSaving ? "Sauvegarde..." : "Enregistrer le Quiz"}
+                </button>
+            </div>
+        </div>
+    )
+};
+
+
+// --- Composant principal pour la gestion des quiz ---
 const QuizEditor = () => {
     const [quizzes, setQuizzes] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [isCreating, setIsCreating] = useState(false);
-    
-    const [newQuizTitle, setNewQuizTitle] = useState('');
-    const [newQuizQuestions, setNewQuizQuestions] = useState([{ text: '', answers: [{ text: '', points: 0 }, { text: '', points: 0 }] }]);
-    const [isSaving, setIsSaving] = useState(false);
+    const [quizToEdit, setQuizToEdit] = useState(null); // null, or quiz object for create/edit
     const [quizToDelete, setQuizToDelete] = useState(null);
 
     useEffect(() => {
@@ -484,51 +638,22 @@ const QuizEditor = () => {
         return () => unsubscribe();
     }, []);
 
-    const handleAddQuestion = () => setNewQuizQuestions([...newQuizQuestions, { text: '', answers: [{ text: '', points: 0 }, { text: '', points: 0 }] }]);
-    const handleRemoveQuestion = (index) => setNewQuizQuestions(newQuizQuestions.filter((_, i) => i !== index));
-    const handleQuestionChange = (index, value) => {
-        const updated = [...newQuizQuestions];
-        updated[index].text = value;
-        setNewQuizQuestions(updated);
-    };
-
-    const handleAddAnswer = (qIndex) => {
-        const updated = [...newQuizQuestions];
-        updated[qIndex].answers.push({ text: '', points: 0 });
-        setNewQuizQuestions(updated);
-    };
-    const handleRemoveAnswer = (qIndex, aIndex) => {
-        const updated = [...newQuizQuestions];
-        updated[qIndex].answers = updated[qIndex].answers.filter((_, i) => i !== aIndex);
-        setNewQuizQuestions(updated);
-    };
-    const handleAnswerChange = (qIndex, aIndex, field, value) => {
-        const updated = [...newQuizQuestions];
-        const val = field === 'points' ? parseInt(value, 10) || 0 : value;
-        updated[qIndex].answers[aIndex][field] = val;
-        setNewQuizQuestions(updated);
-    };
-
     const generateSlug = (name) => name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
-    const handleSaveQuiz = async () => {
-        if (!newQuizTitle.trim()) return alert("Le titre du quiz est obligatoire.");
-        setIsSaving(true);
-        const quizId = generateSlug(newQuizTitle);
-        const quizData = {
-            title: newQuizTitle,
-            questions: newQuizQuestions
-        };
+    const handleSaveQuiz = async (quizData) => {
         try {
-            await setDoc(doc(db, "quizzes", quizId), quizData);
-            setNewQuizTitle('');
-            setNewQuizQuestions([{ text: '', answers: [{ text: '', points: 0 }, { text: '', points: 0 }] }]);
-            setIsCreating(false);
+            if (quizData.id) { // Editing existing quiz
+                const { id, ...dataToSave } = quizData;
+                await updateDoc(doc(db, "quizzes", id), dataToSave);
+            } else { // Creating new quiz
+                const quizId = generateSlug(quizData.title);
+                await setDoc(doc(db, "quizzes", quizId), {title: quizData.title, questions: quizData.questions});
+            }
+            setQuizToEdit(null);
         } catch (e) {
             console.error("Erreur de sauvegarde du quiz: ", e);
             alert("Une erreur s'est produite lors de la sauvegarde.");
         }
-        setIsSaving(false);
     };
     
     const handleDeleteQuiz = async () => {
@@ -542,44 +667,11 @@ const QuizEditor = () => {
         }
     };
 
-
     if (loading) return <p>Chargement des quiz...</p>;
     if (error) return <p className="text-red-500">{error}</p>;
     
-    if (isCreating) {
-        return (
-            <div className="bg-white/80 p-6 rounded-lg shadow-inner animate-fade-in">
-                <h2 className="text-3xl font-bold mb-4 text-pink-600">Créer un nouveau quiz</h2>
-                <div className="space-y-4">
-                    <input type="text" value={newQuizTitle} onChange={e => setNewQuizTitle(e.target.value)} placeholder="Titre du Quiz" className="w-full text-2xl font-bold px-4 py-2 bg-white border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500" />
-                    {newQuizQuestions.map((q, qIndex) => (
-                        <div key={qIndex} className="p-4 border border-pink-200 rounded-lg bg-pink-50/50 space-y-3">
-                            <div className="flex justify-between items-center">
-                                <label className="font-bold text-gray-700">Question {qIndex + 1}</label>
-                                <button onClick={() => handleRemoveQuestion(qIndex)} className="text-red-500 hover:text-red-700">🗑️ Supprimer Question</button>
-                            </div>
-                            <textarea value={q.text} onChange={e => handleQuestionChange(qIndex, e.target.value)} placeholder="Texte de la question" className="w-full px-3 py-2 border rounded-md" rows="2"></textarea>
-                             <h4 className="font-semibold text-gray-600">Réponses :</h4>
-                             {q.answers.map((a, aIndex) => (
-                                <div key={aIndex} className="flex gap-2 items-center">
-                                    <input type="text" value={a.text} onChange={e => handleAnswerChange(qIndex, aIndex, 'text', e.target.value)} placeholder={`Réponse ${aIndex + 1}`} className="flex-grow px-3 py-2 border rounded-md" />
-                                    <input type="number" value={a.points} onChange={e => handleAnswerChange(qIndex, aIndex, 'points', e.target.value)} placeholder="Points" className="w-24 px-3 py-2 border rounded-md" />
-                                    <button onClick={() => handleRemoveAnswer(qIndex, aIndex)} className="text-red-500 hover:text-red-700 text-2xl">×</button>
-                                </div>
-                             ))}
-                             <button onClick={() => handleAddAnswer(qIndex)} className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded-md hover:bg-blue-200">+ Ajouter Réponse</button>
-                        </div>
-                    ))}
-                    <button onClick={handleAddQuestion} className="w-full py-2 bg-green-100 text-green-700 font-semibold rounded-lg hover:bg-green-200">➕ Ajouter une Question</button>
-                </div>
-                <div className="mt-6 flex justify-end gap-4">
-                    <button onClick={() => setIsCreating(false)} className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-6 rounded-lg">Annuler</button>
-                    <button onClick={handleSaveQuiz} disabled={isSaving} className="bg-pink-600 hover:bg-pink-700 text-white font-bold py-2 px-6 rounded-lg disabled:opacity-50">
-                        {isSaving ? "Sauvegarde..." : "Enregistrer le Quiz"}
-                    </button>
-                </div>
-            </div>
-        )
+    if (quizToEdit) {
+        return <QuizForm initialQuiz={quizToEdit} onSave={handleSaveQuiz} onCancel={() => setQuizToEdit(null)} />;
     }
 
     return (
@@ -593,7 +685,7 @@ const QuizEditor = () => {
             )}
             <div className="flex justify-between items-center mb-4">
                 <h2 className="text-3xl font-bold text-pink-600">Liste des Quiz</h2>
-                <button onClick={() => setIsCreating(true)} className="bg-pink-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-pink-700">+ Créer un Quiz</button>
+                <button onClick={() => setQuizToEdit({})} className="bg-pink-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-pink-700">+ Créer un Quiz</button>
             </div>
             <div className="space-y-3">
                 {quizzes.map(quiz => (
@@ -602,9 +694,9 @@ const QuizEditor = () => {
                             <h3 className="text-xl font-bold text-gray-800">{quiz.title}</h3>
                             <p className="text-sm text-gray-500">{quiz.questions?.length || 0} questions</p>
                         </div>
-                        <div className="flex gap-3">
-                            {/* <button className="text-blue-500 hover:text-blue-700 text-2xl">✏️</button> */}
-                            <button onClick={() => setQuizToDelete(quiz)} className="text-red-500 hover:text-red-700 text-2xl">🗑️</button>
+                        <div className="flex gap-4">
+                             <button onClick={() => setQuizToEdit(quiz)} className="text-blue-500 hover:text-blue-700 text-2xl" title="Modifier">✏️</button>
+                            <button onClick={() => setQuizToDelete(quiz)} className="text-red-500 hover:text-red-700 text-2xl" title="Supprimer">🗑️</button>
                         </div>
                     </div>
                 ))}
@@ -621,11 +713,13 @@ const AdminScreen = () => {
 
     const [franchiseName, setFranchiseName] = useState('');
     const [franchisees, setFranchisees] = useState([]);
+    const [totalLeads, setTotalLeads] = useState(0);
     const [newFranchiseInfo, setNewFranchiseInfo] = useState(null);
     const [loading, setLoading] = useState(false);
     const [editingFranchise, setEditingFranchise] = useState(null);
     const [view, setView] = useState('franchisees'); // 'franchisees' or 'quizzes'
     const [franchiseToDelete, setFranchiseToDelete] = useState(null);
+    const [searchTerm, setSearchTerm] = useState("");
 
     useEffect(() => {
         if (!isLoggedIn || !db || view !== 'franchisees') return;
@@ -643,6 +737,41 @@ const AdminScreen = () => {
         };
         fetchFranchisees();
     }, [isLoggedIn, view]);
+    
+    useEffect(() => {
+        if (!isLoggedIn || !db || view !== 'franchisees') {
+            return;
+        }
+
+        const fetchAllLeads = async () => {
+            let count = 0;
+            for (const franchisee of franchisees) {
+                try {
+                    const leadsCollectionRef = collection(db, "franchisees", franchisee.id, "leads");
+                    const snapshot = await getDocs(leadsCollectionRef);
+                    count += snapshot.size;
+                } catch (e) {
+                    console.error(`Impossible de charger les leads pour ${franchisee.id}`, e);
+                }
+            }
+            setTotalLeads(count);
+        };
+
+        if (franchisees.length > 0) {
+            fetchAllLeads();
+        } else {
+            setTotalLeads(0);
+        }
+    }, [isLoggedIn, view, franchisees]);
+
+    const filteredAndSortedFranchisees = useMemo(() => {
+        return franchisees
+            .filter(f => 
+                (f.name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+                (f.id?.toLowerCase() || '').includes(searchTerm.toLowerCase())
+            )
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    }, [franchisees, searchTerm]);
 
     const handleAdminLogin = (e) => {
         e.preventDefault();
@@ -718,7 +847,7 @@ const AdminScreen = () => {
             <div className="w-full max-w-sm mx-auto p-4 text-center">
                 <h2 className="text-4xl font-bold text-pink-700 mb-6">Accès Super Admin</h2>
                 <form onSubmit={handleAdminLogin}>
-                    <input type="password" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="----" maxLength="4" className="w-full text-center text-5xl tracking-[1.5rem] px-4 py-3 bg-white border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 text-gray-800" />
+                    <input type="password" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="----" maxLength="4" className="w-full text-center text-3xl tracking-widest px-4 py-3 bg-white border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500 text-gray-800" />
                     {error && <p className="text-red-600 mt-2 text-lg">{error}</p>}
                     <button type="submit" className="mt-6 w-full bg-pink-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg hover:bg-pink-700 uppercase tracking-wider">Entrer</button>
                 </form>
@@ -736,6 +865,17 @@ const AdminScreen = () => {
                 />
             )}
             <h1 className="text-4xl font-bold text-pink-600 mb-6 text-center">Panneau d'Administration</h1>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div className="bg-white/80 p-6 rounded-lg shadow-inner text-center">
+                    <h3 className="text-xl font-bold text-gray-500 uppercase">Franchisés</h3>
+                    <p className="text-5xl font-bold text-pink-600">{franchisees.length}</p>
+                </div>
+                <div className="bg-white/80 p-6 rounded-lg shadow-inner text-center">
+                    <h3 className="text-xl font-bold text-gray-500 uppercase">Total Leads</h3>
+                    <p className="text-5xl font-bold text-pink-600">{totalLeads}</p>
+                </div>
+            </div>
             
             <div className="flex justify-center mb-6 border-b-2 border-pink-200">
                 <button onClick={() => setView('franchisees')} className={`px-6 py-2 text-xl font-semibold transition-colors duration-200 ${view === 'franchisees' ? 'text-pink-600 border-b-4 border-pink-600' : 'text-gray-500 hover:text-pink-500'}`}>
@@ -769,13 +909,24 @@ const AdminScreen = () => {
                     </div>
 
                     <div className="bg-white/80 p-6 rounded-lg shadow-inner">
-                        <h2 className="text-2xl font-bold mb-4">Liste des Franchisés</h2>
-                        <div className="overflow-x-auto">
+                        <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
+                            <h2 className="text-2xl font-bold">Liste des Franchisés</h2>
+                             <input 
+                                type="text" 
+                                placeholder="Rechercher par nom ou ID..." 
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="w-full sm:w-1/3 px-4 py-2 bg-white border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-pink-500"
+                            />
+                        </div>
+                        <div className="max-h-[32rem] overflow-y-auto">
                             {loading ? <p>Chargement...</p> : error ? <p className="text-red-500">{error}</p> : (
                                 <table className="w-full text-left">
-                                    <thead><tr className="border-b-2 border-pink-200"><th className="p-2">Nom</th><th className="p-2">ID</th><th className="p-2">PIN</th><th className="p-2">Actions</th></tr></thead>
+                                    <thead className="sticky top-0 bg-white/80 backdrop-blur-sm">
+                                      <tr className="border-b-2 border-pink-200"><th className="p-2">Nom</th><th className="p-2">ID</th><th className="p-2">PIN</th><th className="p-2">Actions</th></tr>
+                                    </thead>
                                     <tbody>
-                                        {franchisees.map(f => (
+                                        {filteredAndSortedFranchisees.map(f => (
                                             <tr key={f.id} className="border-b border-pink-100">
                                                 <td className="p-2 font-semibold">
                                                     {editingFranchise === f.id ? (
@@ -819,6 +970,9 @@ export default function App() {
             signInAnonymously(auth).catch(error => console.error("Auth failed", error));
         }
 
+        // Variable pour stocker la fonction de désinscription de Firestore
+        let unsubscribeFromQuizzes = () => {};
+
         const setupInitialData = async () => {
             if (!db) return;
             // 1. Migrer le quiz initial si nécessaire
@@ -836,8 +990,8 @@ export default function App() {
                 }
             }
 
-            // 2. Écouter les changements sur les quiz
-            const unsubscribe = onSnapshot(quizzesRef, (snapshot) => {
+            // 2. Écouter les changements sur les quiz et assigner la fonction de désinscription
+            unsubscribeFromQuizzes = onSnapshot(quizzesRef, (snapshot) => {
                 const fetchedQuizzes = {};
                 snapshot.forEach(doc => {
                     fetchedQuizzes[doc.id] = { id: doc.id, ...doc.data() };
@@ -848,10 +1002,9 @@ export default function App() {
                 console.error("Erreur de chargement des quiz:", error);
                 setIsQuizzesLoading(false);
             });
-            return unsubscribe;
         };
 
-        const unsubscribeFromQuizzes = setupInitialData();
+        setupInitialData();
 
         // 3. Gérer le routage initial
         const path = window.location.pathname.split('/').filter(p => p);
@@ -883,14 +1036,12 @@ export default function App() {
              }
         } else {
             // Par défaut, rediriger vers login si l'URL est inconnue ou racine
-            const defaultFranchiseId = path[1] || '';
-            window.location.href = `/login?franchise_id=${defaultFranchiseId}`;
+            window.location.href = `/login`;
         }
 
+        // La fonction de nettoyage appellera la dernière fonction assignée à unsubscribeFromQuizzes
         return () => {
-             if (unsubscribeFromQuizzes && typeof unsubscribeFromQuizzes === 'function') {
-                unsubscribeFromQuizzes();
-             }
+             unsubscribeFromQuizzes();
         };
     }, []);
 
@@ -930,7 +1081,8 @@ export default function App() {
         setScore(0);
         setQuizId(null);
         setLastResult({ hasWon: false });
-        setPage('welcome');
+        // Redirige vers la page d'accueil du quiz pour ce franchisé
+        window.location.href = `/quiz/${franchiseId}`;
     };
 
     const handleLoginSuccess = (loggedInFranchiseId) => {
@@ -974,13 +1126,15 @@ export default function App() {
         <>
             <style>{`
                 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap');
-                body {
+                
+                .dometvie-background {
                     background-color: #f8f8f8;
                     font-family: 'Poppins', sans-serif;
+                    overflow: hidden;
                 }
                 .main-card {
-                    background-color: rgba(255, 255, 255, 0.9);
-                    backdrop-filter: blur(8px);
+                    background-color: #ffffff;
+                    backdrop-filter: blur(5px);
                     border: 1px solid #e2e8f0;
                     box-shadow: 0 10px 30px rgba(0,0,0,0.1);
                     border-radius: 1.5rem;
@@ -991,30 +1145,22 @@ export default function App() {
                 @keyframes fade-in { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
                 .animate-fade-in { animation: fade-in 0.5s ease-out forwards; }
                 
-                @keyframes popup { 0% { transform: scale(0); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+                @keyframes popup {
+                  0% { transform: scale(0); }
+                  50% { transform: scale(1.1); }
+                  100% { transform: scale(1); }
+                }
                 .animate-popup { animation: popup 0.5s ease-out forwards; }
 
                 @keyframes checkmark { to { stroke-dashoffset: 0; } }
                 .animate-checkmark { stroke-dasharray: 48; stroke-dashoffset: 48; animation: checkmark 0.5s ease-out 0.3s forwards; }
 
-                @keyframes bounce { 0%, 100% { transform: translateY(0) rotate(-5deg); } 50% { transform: translateY(-20px) rotate(5deg); } }
+                @keyframes bounce {
+                    0%, 100% { transform: translateY(0) rotate(-5deg); }
+                    50% { transform: translateY(-20px) rotate(5deg); }
+                }
                 .animate-bounce { animation: bounce 1.5s ease-in-out infinite; }
                 
-                .floating-asset {
-                    position: absolute;
-                    color: #ec489933;
-                    animation-name: float;
-                    animation-timing-function: ease-in-out;
-                    animation-iteration-count: infinite;
-                    opacity: 0;
-                    z-index: 0;
-                }
-                @keyframes float {
-                    0% { transform: translateY(110vh) rotate(0deg); opacity: 0; }
-                    10% { opacity: 1; } 90% { opacity: 1; }
-                    100% { transform: translateY(-10vh) rotate(360deg) scale(1.3); opacity: 0; }
-                }
-
                 .particle {
                     position: absolute;
                     width: 8px;
@@ -1026,15 +1172,31 @@ export default function App() {
                     0% { transform: translate(0, 0) scale(1); opacity: 1; }
                     100% { transform: translate(var(--tx), var(--ty)) scale(0); opacity: 0; }
                 }
+
+                .floating-asset {
+                     position: absolute;
+                     color: #ec489955;
+                     animation-name: float;
+                     animation-timing-function: ease-in-out;
+                     animation-iteration-count: infinite;
+                     opacity: 0;
+                     z-index: 0;
+                }
+                @keyframes float {
+                     0% { transform: translateY(110vh) rotate(0deg); opacity: 0; }
+                     10% { opacity: 1; }
+                     90% { opacity: 1; }
+                     100% { transform: translateY(-10vh) rotate(360deg) scale(1.3); opacity: 0; }
+                }
             `}</style>
-            <div className="min-h-screen w-full flex items-center justify-center p-2 sm:p-4 relative overflow-hidden">
+            <div className="dometvie-background min-h-screen w-full flex items-center justify-center p-2 sm:p-4 relative">
                 <FloatingAssets />
                 <div className="w-full max-w-5xl main-card animate-fade-in">
                     {renderPage()}
                 </div>
             </div>
             <div className="absolute bottom-4 right-4 z-20">
-                {page.startsWith('quiz') || ['welcome', 'form', 'success'].includes(page) ? (
+                {page && (page.startsWith('quiz') || ['welcome', 'form', 'success'].includes(page)) ? (
                     <button onClick={() => window.location.href = `/dashboard/${franchiseId}`} className="text-xs text-gray-400 hover:text-pink-600 transition-colors font-bold uppercase">Accès Franchisé</button>
                 ) : null }
             </div>
